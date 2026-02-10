@@ -1,0 +1,29 @@
+{
+  "name": "option-calculator-mcp-server",
+  "version": "1.0.0",
+  "description": "MCP Server for Option Calculator - provides option pricing and Greeks calculation",
+  "main": "server.py",
+  "scripts": {
+    "start": "python server.py",
+    "test": "python -m pytest",
+    "dev": "python server.py"
+  },
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "options",
+    "black-scholes",
+    "finance",
+    "trading",
+    "calculator"
+  ],
+  "author": "Your Name",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/yourusername/option-calculator"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
