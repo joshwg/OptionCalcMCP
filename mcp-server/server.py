@@ -3,8 +3,8 @@ Option Calculator MCP Server
 Provides option pricing, Greeks calculation, and stock data tools via MCP
 """
 
-import asyncio
 import json
+import os
 from datetime import datetime, timedelta
 from typing import Any
 
@@ -16,8 +16,12 @@ import requests
 
 from mcp.server.models import InitializationOptions
 from mcp.server import NotificationOptions, Server
-from mcp.server.stdio import stdio_server
+from mcp.server.sse import SseServerTransport
 from mcp.types import Tool, TextContent
+from starlette.applications import Starlette
+from starlette.routing import Route, Mount
+from starlette.requests import Request
+import uvicorn
 
 
 # ==================== STOCK DATA FUNCTIONS ====================
@@ -567,12 +571,14 @@ async def handle_call_tool(name: str, arguments: dict) -> list[TextContent]:
         return [TextContent(type="text", text=json.dumps({"error": str(e)}))]
 
 
-async def main():
-    """Main entry point for the server"""
-    async with stdio_server() as (read_stream, write_stream):
+sse = SseServerTransport("/messages/")
+
+
+async def handle_sse(request: Request):
+    async with sse.connect_sse(request.scope, request.receive, request._send) as streams:
         await server.run(
-            read_stream,
-            write_stream,
+            streams[0],
+            streams[1],
             InitializationOptions(
                 server_name="option-calculator-server",
                 server_version="1.0.0",
@@ -584,5 +590,24 @@ async def main():
         )
 
 
+async def handle_messages(request: Request):
+    await sse.handle_post_message(request.scope, request.receive, request._send)
+
+
+async def handle_health(_request):
+    from starlette.responses import JSONResponse
+    return JSONResponse({"status": "ok"})
+
+
+app = Starlette(
+    routes=[
+        Route("/sse", endpoint=handle_sse),
+        Route("/messages/", endpoint=handle_messages, methods=["POST"]),
+        Route("/health", endpoint=handle_health),
+    ]
+)
+
+
 if __name__ == "__main__":
-    asyncio.run(main())
+    port = int(os.environ.get("PORT", 8080))
+    uvicorn.run(app, host="0.0.0.0", port=port)
