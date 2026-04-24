@@ -296,18 +296,18 @@ def calculate_greeks(S, K, T, r, sigma, option_type='call'):
     }
 
 
-def binomial_tree_american(S, K, T, r, sigma, option_type='call', steps=100):
+def binomial_tree_american(S, K, T, r, sigma, option_type='call', steps=100, q=0):
     """Calculate American option price using binomial tree"""
     if T <= 0:
         if option_type == 'call':
             return max(S - K, 0)
         else:
             return max(K - S, 0)
-    
+
     dt = T / steps
     u = np.exp(sigma * np.sqrt(dt))
     d = 1 / u
-    p = (np.exp(r * dt) - d) / (u - d)
+    p = (np.exp((r - q) * dt) - d) / (u - d)
     
     # Initialize asset prices at maturity
     asset_prices = np.zeros(steps + 1)
@@ -337,6 +337,123 @@ def binomial_tree_american(S, K, T, r, sigma, option_type='call', steps=100):
             option_values[i] = max(option_values[i], intrinsic_value)
     
     return float(option_values[0])
+
+
+def get_option_expirations(ticker, months=None):
+    """Get list of available option expiration dates, optionally filtered to next N months"""
+    try:
+        stock = yf.Ticker(ticker)
+        dates = list(stock.options or [])
+        if not dates:
+            return {'success': False, 'error': 'No options available'}
+        if months is not None:
+            eastern = pytz.timezone('US/Eastern')
+            now_et = datetime.now(eastern)
+            today = datetime.now()
+            cutoff = today + timedelta(days=int(months) * 30)
+            filtered = []
+            for d in dates:
+                exp = datetime.strptime(d, '%Y-%m-%d')
+                if exp.date() == today.date() and now_et.hour >= 16:
+                    continue
+                if today.date() <= exp.date() <= cutoff.date():
+                    filtered.append(d)
+            return {'success': True, 'expirations': filtered, 'all_expirations': dates}
+        return {'success': True, 'expirations': dates}
+    except Exception as e:
+        return {'success': False, 'error': str(e)}
+
+
+def get_atm_implied_volatility(ticker, expiration_date, current_price, option_type='call'):
+    """Get at-the-money implied volatility for an expiration date"""
+    try:
+        chain = get_option_chain(ticker, expiration_date)
+        if not chain.get('success'):
+            return {'success': False, 'error': chain.get('error'), 'implied_volatility': None}
+        call_iv, put_iv = None, None
+        min_cd, min_pd = float('inf'), float('inf')
+        for c in chain['calls']:
+            diff = abs(c['strike'] - current_price)
+            if diff < min_cd and c['impliedVolatility'] > 0:
+                min_cd, call_iv = diff, c['impliedVolatility']
+        for p in chain['puts']:
+            diff = abs(p['strike'] - current_price)
+            if diff < min_pd and p['impliedVolatility'] > 0:
+                min_pd, put_iv = diff, p['impliedVolatility']
+        if option_type == 'call' and call_iv:
+            iv = call_iv
+        elif option_type == 'put' and put_iv:
+            iv = put_iv
+        elif call_iv and put_iv:
+            iv = (call_iv + put_iv) / 2
+        else:
+            iv = call_iv or put_iv
+        return {'success': True, 'implied_volatility': iv}
+    except Exception as e:
+        return {'success': False, 'error': str(e), 'implied_volatility': None}
+
+
+def get_iv_for_strike(ticker, expiration_date, strike, option_type='call'):
+    """Get implied volatility for a specific strike price"""
+    try:
+        chain = get_option_chain(ticker, expiration_date)
+        if not chain.get('success'):
+            return {'success': False, 'error': chain.get('error'), 'implied_volatility': None}
+        opts = chain['calls'] if option_type == 'call' else chain['puts']
+        best, min_diff = None, float('inf')
+        for o in opts:
+            diff = abs(o['strike'] - float(strike))
+            if diff < min_diff:
+                min_diff, best = diff, o
+        iv = best['impliedVolatility'] if best and best['impliedVolatility'] > 0 else None
+        return {'success': True, 'implied_volatility': iv}
+    except Exception as e:
+        return {'success': False, 'error': str(e), 'implied_volatility': None}
+
+
+def dispatch_api(tool, args):
+    """Dispatch a REST API call to the appropriate business logic function"""
+    if tool == 'get_stock_info':
+        return get_stock_info(args['ticker'])
+    elif tool == 'get_historical_volatility':
+        return {'volatility': get_historical_volatility(args['ticker'], int(args.get('days', 30)))}
+    elif tool == 'search_tickers':
+        return search_tickers(args['query'], int(args.get('max_results', 10)))
+    elif tool == 'get_option_chain':
+        return get_option_chain(args['ticker'], args.get('expiration_date'))
+    elif tool == 'get_option_expirations':
+        return get_option_expirations(args['ticker'], args.get('months'))
+    elif tool == 'get_atm_implied_volatility':
+        return get_atm_implied_volatility(
+            args['ticker'], args['expiration_date'],
+            float(args['current_price']), args.get('option_type', 'call'))
+    elif tool == 'get_implied_volatility_for_strike':
+        return get_iv_for_strike(
+            args['ticker'], args['expiration_date'],
+            float(args['strike']), args.get('option_type', 'call'))
+    elif tool == 'calculate_option_price':
+        S = float(args['stock_price'])
+        K = float(args['strike_price'])
+        T = float(args['time_to_expiration'])
+        r = float(args['risk_free_rate'])
+        sigma = float(args['volatility'])
+        option_type = args['option_type']
+        model = args.get('model', 'black-scholes')
+        q = float(args.get('dividend_yield', 0))
+        if model == 'binomial':
+            price = binomial_tree_american(S, K, T, r, sigma, option_type, q=q)
+        elif option_type == 'call':
+            price = black_scholes_call(S, K, T, r, sigma)
+        else:
+            price = black_scholes_put(S, K, T, r, sigma)
+        return {'price': price, 'model': model, 'option_type': option_type}
+    elif tool == 'calculate_greeks':
+        return calculate_greeks(
+            float(args['stock_price']), float(args['strike_price']),
+            float(args['time_to_expiration']), float(args['risk_free_rate']),
+            float(args['volatility']), args['option_type'])
+    else:
+        raise ValueError(f'Unknown tool: {tool}')
 
 
 # ==================== MCP SERVER ====================
@@ -571,6 +688,18 @@ async def handle_call_tool(name: str, arguments: dict) -> list[TextContent]:
         return [TextContent(type="text", text=json.dumps({"error": str(e)}))]
 
 
+async def handle_api_rest(request: Request):
+    from starlette.responses import JSONResponse
+    try:
+        body = await request.json()
+        tool = body.get('tool')
+        args = body.get('args', {})
+        result = dispatch_api(tool, args)
+        return JSONResponse({'ok': True, 'result': result})
+    except Exception as e:
+        return JSONResponse({'ok': False, 'error': str(e)}, status_code=500)
+
+
 sse = SseServerTransport("/messages/")
 
 
@@ -604,6 +733,7 @@ app = Starlette(
         Route("/sse", endpoint=handle_sse),
         Route("/messages/", endpoint=handle_messages, methods=["POST"]),
         Route("/health", endpoint=handle_health),
+        Route("/api", endpoint=handle_api_rest, methods=["POST"]),
     ]
 )
 

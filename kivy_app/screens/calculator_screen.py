@@ -17,10 +17,9 @@ parent_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__f
 if parent_dir not in sys.path:
     sys.path.insert(0, parent_dir)
 
-import yahoo_data as yd
-import option_pricing as bs
+import server_client as yd
+import server_client as bs
 from config_manager import ConfigManager
-from utils.input_validator import InputValidator
 
 
 class CalculatorScreen(Screen):
@@ -66,9 +65,6 @@ class CalculatorScreen(Screen):
         # Load saved risk-free rate
         config = self.config_manager.load_config()
         self.risk_free_rate = str(config.get('risk_free_rate', 4.5))
-        
-        # Initialize validator
-        self.validator = InputValidator(self.show_error)
         
     def show_error(self, title, message):
         """Show error popup"""
@@ -142,7 +138,8 @@ class CalculatorScreen(Screen):
         """Load stock data for the entered ticker"""
         ticker = self.ticker_text.strip().upper()
         
-        if not self.validator.validate_ticker(ticker):
+        if not ticker:
+            self.show_error("Input Error", "Please enter a ticker symbol")
             return
         
         self.show_suggestions = False
@@ -230,25 +227,15 @@ class CalculatorScreen(Screen):
     def calculate_option(self):
         """Calculate option price and Greeks"""
         # Validate inputs
-        if not self.current_price or not self.validator.validate_required_field(
-            self.current_price, "Current Price"
-        ):
-            return
-        
-        if not self.strike_price or not self.validator.validate_required_field(
-            self.strike_price, "Strike Price"
-        ):
-            return
-        
-        if not self.expiration_date or not self.validator.validate_required_field(
-            self.expiration_date, "Expiration Date"
-        ):
-            return
-        
-        if not self.volatility or not self.validator.validate_required_field(
-            self.volatility, "Volatility"
-        ):
-            return
+        for value, name in [
+            (self.current_price, "Current Price"),
+            (self.strike_price, "Strike Price"),
+            (self.expiration_date, "Expiration Date"),
+            (self.volatility, "Volatility"),
+        ]:
+            if not value or not value.strip():
+                self.show_error("Input Error", f"Please enter {name}")
+                return
         
         try:
             # Parse inputs

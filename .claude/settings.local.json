@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(railway status *)",
+      "Bash(npm list *)",
+      "Bash(npx @railway/cli --version)",
+      "Bash(npm --version)"
+    ]
+  }
+}
