@@ -65,6 +65,8 @@ If you already have the MCP server deployed on Railway:
    ```
 
 3. **Run Calculator**
+   Run from the top level directory
+   You will need the venv active.
    ```bash
    python main.py
    ```

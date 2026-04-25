@@ -33,7 +33,7 @@ python main.py
 ```env
 MCP_SERVER_MODE=local|remote
 MCP_SERVER_COMMAND=python mcp-server/server.py   # local mode
-MCP_SERVER_URL=https://optioncalcmcp-production.up.railway.app  # remote mode
+MCP_SERVER_URL=https://{project-url}.up.railway.app  # remote mode
 DEFAULT_RISK_FREE_RATE=0.05
 DEFAULT_VOLATILITY=0.30
 ```
