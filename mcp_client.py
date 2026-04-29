@@ -1,26 +1,36 @@
 """
 MCP Client for Option Calculator
-Connects to the MCP server and provides a simple interface for tool calls
+Connects to the HTTP API exposed by the Option Calculator server.
 """
 
-import json
+import os
+import shlex
+import socket
 import subprocess
 import sys
+import time
+from contextlib import closing
 from typing import Optional, Dict, Any
+
+import requests
 
 
 class MCPClient:
-    """Client to interact with the Option Calculator MCP Server"""
+    """Client to interact with the Option Calculator server."""
     
-    def __init__(self, server_command: str = ".venv\\Scripts\\python.exe mcp-server\\server.py"):
+    def __init__(self, server_command: Optional[str] = None):
         """
         Initialize MCP Client
         
         Args:
             server_command: Command to start the MCP server (local) or server URL (Railway)
         """
+        if server_command is None:
+            server_command = f'"{sys.executable}" mcp-server\\server.py'
+
         self.server_command = server_command
-        self.is_local = "python" in server_command or "node" in server_command
+        self.is_local = not server_command.startswith(("http://", "https://"))
+        self.base_url = self._resolve_base_url(server_command)
     
     def call_tool(self, tool_name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
         """
@@ -35,73 +45,78 @@ class MCPClient:
         """
         if self.is_local:
             return self._call_local_tool(tool_name, arguments)
-        else:
-            return self._call_remote_tool(tool_name, arguments)
+        return self._call_remote_tool(tool_name, arguments)
+
+    def _resolve_base_url(self, server_command: str) -> str:
+        if self.is_local:
+            port = int(os.getenv("MCP_SERVER_PORT", "8080"))
+            return f"http://127.0.0.1:{port}"
+        return server_command.rstrip("/")
+
+    def _pick_unused_port(self) -> int:
+        with closing(socket.socket(socket.AF_INET, socket.SOCK_STREAM)) as sock:
+            sock.bind(("127.0.0.1", 0))
+            return int(sock.getsockname()[1])
+
+    def _command_args(self) -> list[str]:
+        return [part.strip('"') for part in shlex.split(self.server_command, posix=False)]
+
+    def _wait_for_server(self, base_url: str, timeout: float = 10.0) -> None:
+        deadline = time.time() + timeout
+        last_error = None
+        while time.time() < deadline:
+            try:
+                response = requests.get(f"{base_url}/health", timeout=1)
+                if response.ok:
+                    return
+            except requests.RequestException as exc:
+                last_error = exc
+            time.sleep(0.2)
+        raise RuntimeError(f"Server did not become ready at {base_url}: {last_error}")
+
+    def _post_api(self, base_url: str, tool_name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
+        response = requests.post(
+            f"{base_url}/api",
+            json={"tool": tool_name, "args": arguments},
+            timeout=30
+        )
+        response.raise_for_status()
+        payload = response.json()
+        if not payload.get("ok"):
+            return {"success": False, "error": payload.get("error", "Unknown server error")}
+        return payload["result"]
     
     def _call_local_tool(self, tool_name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
-        """Call tool on local MCP server via stdio"""
+        """Call tool on a local server process via HTTP."""
+        port = self._pick_unused_port()
+        base_url = f"http://127.0.0.1:{port}"
+        process = None
         try:
-            # Prepare MCP request
-            request = {
-                "jsonrpc": "2.0",
-                "id": 1,
-                "method": "tools/call",
-                "params": {
-                    "name": tool_name,
-                    "arguments": arguments
-                }
-            }
-            
-            # Start server process
+            env = os.environ.copy()
+            env["PORT"] = str(port)
             process = subprocess.Popen(
-                self.server_command.split(),
-                stdin=subprocess.PIPE,
+                self._command_args(),
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
-                text=True
+                text=True,
+                env=env
             )
-            
-            # Send request
-            stdout, stderr = process.communicate(
-                input=json.dumps(request) + "\n",
-                timeout=30
-            )
-            
-            if stderr:
-                return {"success": False, "error": f"Server error: {stderr}"}
-            
-            # Parse response
-            try:
-                response = json.loads(stdout)
-                if "result" in response and "content" in response["result"]:
-                    content = response["result"]["content"]
-                    if isinstance(content, list) and len(content) > 0:
-                        return json.loads(content[0]["text"])
-                return response
-            except json.JSONDecodeError as e:
-                return {"success": False, "error": f"Invalid JSON response: {e}"}
-        
-        except subprocess.TimeoutExpired:
-            return {"success": False, "error": "Request timed out"}
+            self._wait_for_server(base_url)
+            return self._post_api(base_url, tool_name, arguments)
         except Exception as e:
             return {"success": False, "error": str(e)}
+        finally:
+            if process is not None:
+                process.terminate()
+                try:
+                    process.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    process.kill()
     
     def _call_remote_tool(self, tool_name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
-        """Call tool on remote MCP server (Railway)"""
-        # For Railway deployment, you would use an HTTP client or WebSocket
-        # This is a placeholder for the remote implementation
-        import requests
-        
+        """Call tool on remote server via the REST API."""
         try:
-            response = requests.post(
-                f"{self.server_command}/tools/call",
-                json={
-                    "name": tool_name,
-                    "arguments": arguments
-                },
-                timeout=30
-            )
-            return response.json()
+            return self._post_api(self.base_url, tool_name, arguments)
         except Exception as e:
             return {"success": False, "error": str(e)}
     

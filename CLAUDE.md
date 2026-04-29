@@ -45,7 +45,7 @@ DEFAULT_VOLATILITY=0.30
 - Desktop client: `requirements.txt` (numpy, scipy, yfinance, pandas, requests, pytz)
 - MCP server: `mcp-server/requirements.txt`
 - Mobile: `kivy_app/requirements-kivy.txt`
-- Two venvs present: `.venv` (Windows/Python 3.11) and `venv` (Linux/Python 3.12 — used by buildozer for Android)
+- Single supported environment: `venv` (Linux/Python 3.12 in WSL2)
 
 ## Tests
 

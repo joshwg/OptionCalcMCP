@@ -628,9 +628,10 @@ async def handle_call_tool(name: str, arguments: dict) -> list[TextContent]:
             sigma = float(arguments["volatility"])
             option_type = arguments["option_type"]
             model = arguments.get("model", "black-scholes")
+            q = float(arguments.get("dividend_yield", 0))
             
             if model == "binomial":
-                price = binomial_tree_american(S, K, T, r, sigma, option_type)
+                price = binomial_tree_american(S, K, T, r, sigma, option_type, q=q)
             else:
                 if option_type == "call":
                     price = black_scholes_call(S, K, T, r, sigma)

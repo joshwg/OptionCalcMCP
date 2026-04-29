@@ -169,7 +169,7 @@ def main():
     # Initialize client
     print("Initializing MCP client (local mode)...")
     try:
-        client = MCPClient("python mcp-server/server.py")
+        client = MCPClient(f'"{sys.executable}" mcp-server\\server.py')
         print("✓ Client initialized\n")
     except Exception as e:
         print(f"✗ Failed to initialize client: {e}")

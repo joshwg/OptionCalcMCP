@@ -1,0 +1,1 @@
+web: cd mcp-server && python3 server.py

@@ -87,20 +87,24 @@ If you already have the MCP server deployed on Railway:
    # Push to GitHub, then connect to Railway
    ```
 
+   For GitHub-based deploys from the repo root, Railway should use the root-level
+   `Dockerfile` and `railway.json`, which package and start the service from
+   `mcp-server/server.py`.
+
 2. **Or Run Server Locally**
    ```bash
    cd mcp-server
-   python -m venv venv
-   source venv/bin/activate  # Windows: venv\Scripts\activate
+   python3 -m venv ../venv
+   source ../venv/bin/activate
    pip install -r requirements.txt
-   python server.py
+   python3 server.py
    ```
 
 3. **Configure Client**
    ```env
    # For local server
    MCP_SERVER_MODE=local
-   MCP_SERVER_COMMAND=python mcp-server/server.py
+   MCP_SERVER_COMMAND=venv/bin/python mcp-server/server.py
    ```
 
 ## 📁 Project Structure
@@ -132,8 +136,7 @@ OptionCalculator/
 │   └── screens/
 │
 ├── MIGRATION_GUIDE.md      # How to migrate to MCP
-├── deploy_mcp.bat         # Windows deployment script
-└── deploy_mcp.sh          # Linux/Mac deployment script
+└── deploy_mcp.sh          # WSL/Linux deployment script
 ```
 
 ## 🛠️ Development
@@ -219,7 +222,7 @@ Create a `.env` file:
 MCP_SERVER_MODE=local|remote
 
 # Local Server
-MCP_SERVER_COMMAND=python mcp-server/server.py
+MCP_SERVER_COMMAND=venv/bin/python mcp-server/server.py
 
 # Remote Server (Railway)
 MCP_SERVER_URL=https://your-app.railway.app

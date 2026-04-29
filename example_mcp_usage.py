@@ -8,6 +8,7 @@ instead of direct function calls.
 import tkinter as tk
 from tkinter import messagebox
 from datetime import datetime
+import sys
 from mcp_client import MCPClient
 from utils import ThreadingHelper, InputValidator
 
@@ -22,14 +23,14 @@ class CalculatorOperations:
         """Initialize with MCP client"""
         # Initialize MCP client
         # For local development:
-        self.mcp_client = MCPClient("python mcp-server/server.py")
+        self.mcp_client = MCPClient(f'"{sys.executable}" mcp-server\\server.py')
         
         # For production (Railway):
         # self.mcp_client = MCPClient("https://your-app.railway.app")
         
         # Or use environment variable:
         # import os
-        # server_url = os.getenv("MCP_SERVER_URL", "python mcp-server/server.py")
+        # server_url = os.getenv("MCP_SERVER_URL", f'"{sys.executable}" mcp-server\\server.py')
         # self.mcp_client = MCPClient(server_url)
     
     
