@@ -76,12 +76,12 @@ If you already have the MCP server deployed on Railway:
 
 1. **Deploy to Railway**
    ```bash
-   cd mcp-server
-   
+   # Run from the repository root
+
    # Option A: Via Railway CLI
    npm i -g @railway/cli
    railway login
-   railway init
+   railway link
    railway up
    
    # Option B: Via GitHub
@@ -115,8 +115,6 @@ OptionCalculator/
 ├── mcp-server/              # MCP Server (deploy to Railway)
 │   ├── server.py           # Main server with all tools
 │   ├── requirements.txt    # Server dependencies
-│   ├── Procfile           # Railway deployment config
-│   ├── railway.json       # Railway settings
 │   └── README.md          # Server documentation
 │
 ├── main.py                 # Desktop app entry point
@@ -252,9 +250,8 @@ Edit `config.json` for persistent settings:
 
 **Method 1: Railway CLI**
 ```bash
-cd mcp-server
 railway login
-railway init
+railway link
 railway up
 ```
 

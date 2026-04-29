@@ -74,11 +74,10 @@ All shell commands run in **WSL2 (Ubuntu)**, not PowerShell. Use `bash` via the 
 
 ## Deployment
 
-MCP server deploys to Railway via `mcp-server/Procfile` and `railway.json`. The server uses HTTP/SSE transport (`/sse` and `/messages/` endpoints). Health check at `/health`.
+MCP server deploys to Railway from the repository root via the root `Dockerfile`, `Procfile`, and `railway.json`. The server uses HTTP/SSE transport (`/sse` and `/messages/` endpoints). Health check at `/health`.
 
 ```bash
-cd mcp-server
-railway login && railway up
+railway login && railway link && railway up
 ```
 
 ## Key Notes
