@@ -3,7 +3,25 @@ Black-Scholes Option Calculator - Main Application
 Supports multiple windows for different stocks
 """
 
+import os
+import sys
 import tkinter as tk
+
+
+def configure_client_mode(argv=None):
+    """Default to remote services; allow opting into local services via --local."""
+    if argv is None:
+        argv = sys.argv[1:]
+
+    use_local = "--local" in argv
+    os.environ["OPTIONCALC_CLIENT_MODE"] = "local" if use_local else "remote"
+
+    if use_local:
+        sys.argv = [sys.argv[0], *[arg for arg in argv if arg != "--local"]]
+
+
+configure_client_mode()
+
 from calculator_window import OptionCalculatorWindow
 
 

@@ -8,6 +8,8 @@ import os
 from datetime import datetime, timedelta
 from typing import Any
 
+import math
+
 import numpy as np
 from scipy.stats import norm
 import yfinance as yf
@@ -183,16 +185,33 @@ def get_option_chain(ticker, expiration_date=None):
             expiration_date = dates[0]
         
         opt_chain = stock.option_chain(expiration_date)
+
+        def safe_float(value):
+            if value is None:
+                return None
+            try:
+                value = float(value)
+            except (TypeError, ValueError):
+                return None
+            if math.isnan(value):
+                return None
+            return value
+
+        def safe_int(value):
+            numeric_value = safe_float(value)
+            if numeric_value is None:
+                return 0
+            return int(numeric_value)
         
         calls_data = []
         for _, row in opt_chain.calls.iterrows():
             calls_data.append({
                 'strike': float(row['strike']),
-                'lastPrice': float(row['lastPrice']) if 'lastPrice' in row else None,
-                'bid': float(row['bid']) if 'bid' in row else None,
-                'ask': float(row['ask']) if 'ask' in row else None,
-                'volume': int(row['volume']) if 'volume' in row and row['volume'] else 0,
-                'openInterest': int(row['openInterest']) if 'openInterest' in row else 0,
+                'lastPrice': safe_float(row['lastPrice']) if 'lastPrice' in row else None,
+                'bid': safe_float(row['bid']) if 'bid' in row else None,
+                'ask': safe_float(row['ask']) if 'ask' in row else None,
+                'volume': safe_int(row['volume']) if 'volume' in row else 0,
+                'openInterest': safe_int(row['openInterest']) if 'openInterest' in row else 0,
                 'impliedVolatility': normalize_implied_volatility(row.get('impliedVolatility', 0))
             })
         
@@ -200,11 +219,11 @@ def get_option_chain(ticker, expiration_date=None):
         for _, row in opt_chain.puts.iterrows():
             puts_data.append({
                 'strike': float(row['strike']),
-                'lastPrice': float(row['lastPrice']) if 'lastPrice' in row else None,
-                'bid': float(row['bid']) if 'bid' in row else None,
-                'ask': float(row['ask']) if 'ask' in row else None,
-                'volume': int(row['volume']) if 'volume' in row and row['volume'] else 0,
-                'openInterest': int(row['openInterest']) if 'openInterest' in row else 0,
+                'lastPrice': safe_float(row['lastPrice']) if 'lastPrice' in row else None,
+                'bid': safe_float(row['bid']) if 'bid' in row else None,
+                'ask': safe_float(row['ask']) if 'ask' in row else None,
+                'volume': safe_int(row['volume']) if 'volume' in row else 0,
+                'openInterest': safe_int(row['openInterest']) if 'openInterest' in row else 0,
                 'impliedVolatility': normalize_implied_volatility(row.get('impliedVolatility', 0))
             })
         

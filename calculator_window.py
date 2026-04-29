@@ -7,9 +7,14 @@ import tkinter as tk
 from tkinter import ttk, messagebox, scrolledtext
 from datetime import datetime
 import threading
+import os
 
-import option_pricing as bs
-import yahoo_data as yd
+if os.environ.get('OPTIONCALC_CLIENT_MODE', 'remote').lower() == 'local':
+    import option_pricing as bs
+    import yahoo_data as yd
+else:
+    import server_client as bs
+    import server_client as yd
 from config_manager import ConfigManager
 from calculator_operations import CalculatorOperations
 from utils import ThreadingHelper, FontManager, InputValidator, SuggestionWidget
