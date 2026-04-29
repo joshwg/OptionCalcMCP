@@ -88,9 +88,9 @@ If you already have the MCP server deployed on Railway:
    # Push to GitHub, then connect to Railway
    ```
 
-   For GitHub-based deploys from the repo root, Railway should use the root-level
-   `Dockerfile` and `railway.json`, which package and start the service from
-   `mcp-server/server.py`.
+   Railway deployment is supported only from the repository root. Railway should
+   use the root-level `Dockerfile`, `Procfile`, and `railway.json`, which package
+   and start the service from `mcp-server/server.py`.
 
 2. **Or Run Server Locally**
    ```bash
@@ -112,10 +112,10 @@ If you already have the MCP server deployed on Railway:
 
 ```
 OptionCalculator/
-├── mcp-server/              # MCP Server (deploy to Railway)
+├── mcp-server/              # MCP Server implementation
 │   ├── server.py           # Main server with all tools
 │   ├── requirements.txt    # Server dependencies
-│   └── README.md          # Server documentation
+│   └── README.md           # Server documentation
 │
 ├── main.py                 # Desktop app entry point
 ├── calculator_window.py    # Main calculator UI
@@ -162,7 +162,7 @@ pip install -r mcp-server/requirements.txt
 
 ### Running Locally
 ```bash
-# Terminal 1: Start MCP server
+# Terminal 1: Start MCP server locally
 cd mcp-server
 python server.py
 
