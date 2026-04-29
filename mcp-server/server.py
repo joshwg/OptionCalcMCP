@@ -21,6 +21,7 @@ from mcp.types import Tool, TextContent
 from starlette.applications import Starlette
 from starlette.routing import Route, Mount
 from starlette.requests import Request
+from starlette.responses import JSONResponse, PlainTextResponse
 import uvicorn
 
 
@@ -461,6 +462,36 @@ def dispatch_api(tool, args):
 server = Server("option-calculator-server")
 
 
+AUTH_TOKEN_ENV_VARS = ("MCP_SERVER_AUTH_TOKEN", "OPTIONCALC_API_TOKEN")
+
+
+def get_configured_auth_token():
+    for env_var in AUTH_TOKEN_ENV_VARS:
+        token = os.environ.get(env_var)
+        if token:
+            return token
+    return None
+
+
+def is_request_authorized(request: Request) -> bool:
+    configured_token = get_configured_auth_token()
+    if not configured_token:
+        return True
+
+    auth_header = request.headers.get("authorization", "")
+    if auth_header.startswith("Bearer "):
+        return auth_header.removeprefix("Bearer ").strip() == configured_token
+
+    api_key = request.headers.get("x-api-key", "")
+    return api_key == configured_token
+
+
+async def require_auth(request: Request):
+    if is_request_authorized(request):
+        return None
+    return JSONResponse({"ok": False, "error": "Unauthorized"}, status_code=401)
+
+
 @server.list_tools()
 async def handle_list_tools() -> list[Tool]:
     """List available tools"""
@@ -690,7 +721,9 @@ async def handle_call_tool(name: str, arguments: dict) -> list[TextContent]:
 
 
 async def handle_api_rest(request: Request):
-    from starlette.responses import JSONResponse
+    unauthorized = await require_auth(request)
+    if unauthorized is not None:
+        return unauthorized
     try:
         body = await request.json()
         tool = body.get('tool')
@@ -705,6 +738,9 @@ sse = SseServerTransport("/messages/")
 
 
 async def handle_sse(request: Request):
+    unauthorized = await require_auth(request)
+    if unauthorized is not None:
+        return PlainTextResponse("Unauthorized", status_code=401)
     async with sse.connect_sse(request.scope, request.receive, request._send) as streams:
         await server.run(
             streams[0],
@@ -721,11 +757,13 @@ async def handle_sse(request: Request):
 
 
 async def handle_messages(request: Request):
+    unauthorized = await require_auth(request)
+    if unauthorized is not None:
+        return unauthorized
     await sse.handle_post_message(request.scope, request.receive, request._send)
 
 
 async def handle_health(_request):
-    from starlette.responses import JSONResponse
     return JSONResponse({"status": "ok"})
 
 

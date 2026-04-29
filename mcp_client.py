@@ -31,6 +31,7 @@ class MCPClient:
         self.server_command = server_command
         self.is_local = not server_command.startswith(("http://", "https://"))
         self.base_url = self._resolve_base_url(server_command)
+        self.auth_token = os.environ.get("MCP_SERVER_AUTH_TOKEN") or os.environ.get("OPTIONCALC_API_TOKEN")
     
     def call_tool(self, tool_name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
         """
@@ -78,6 +79,7 @@ class MCPClient:
         response = requests.post(
             f"{base_url}/api",
             json={"tool": tool_name, "args": arguments},
+            headers=self._headers(),
             timeout=30
         )
         response.raise_for_status()
@@ -85,6 +87,14 @@ class MCPClient:
         if not payload.get("ok"):
             return {"success": False, "error": payload.get("error", "Unknown server error")}
         return payload["result"]
+
+    def _headers(self) -> Dict[str, str]:
+        if not self.auth_token:
+            return {}
+        return {
+            "Authorization": f"Bearer {self.auth_token}",
+            "X-API-Key": self.auth_token,
+        }
     
     def _call_local_tool(self, tool_name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
         """Call tool on a local server process via HTTP."""

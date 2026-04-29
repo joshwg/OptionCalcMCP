@@ -13,10 +13,25 @@ from dotenv import load_dotenv
 load_dotenv()
 
 _SERVER_URL = os.environ.get('MCP_SERVER_URL', 'http://localhost:8080').rstrip('/')
+_SERVER_AUTH_TOKEN = os.environ.get('MCP_SERVER_AUTH_TOKEN') or os.environ.get('OPTIONCALC_API_TOKEN')
+
+
+def _headers():
+    if not _SERVER_AUTH_TOKEN:
+        return {}
+    return {
+        'Authorization': f'Bearer {_SERVER_AUTH_TOKEN}',
+        'X-API-Key': _SERVER_AUTH_TOKEN,
+    }
 
 
 def _call(tool, **args):
-    resp = requests.post(f'{_SERVER_URL}/api', json={'tool': tool, 'args': args}, timeout=30)
+    resp = requests.post(
+        f'{_SERVER_URL}/api',
+        json={'tool': tool, 'args': args},
+        headers=_headers(),
+        timeout=30,
+    )
     resp.raise_for_status()
     data = resp.json()
     if not data.get('ok'):

@@ -62,6 +62,7 @@ If you already have the MCP server deployed on Railway:
    ```env
    MCP_SERVER_MODE=remote
    MCP_SERVER_URL=https://your-app.railway.app
+   MCP_SERVER_AUTH_TOKEN=replace-with-a-long-random-token
    ```
 
 3. **Run Calculator**
@@ -226,6 +227,7 @@ MCP_SERVER_COMMAND=venv/bin/python mcp-server/server.py
 
 # Remote Server (Railway)
 MCP_SERVER_URL=https://your-app.railway.app
+MCP_SERVER_AUTH_TOKEN=replace-with-a-long-random-token
 
 # UI Settings
 DEFAULT_RISK_FREE_RATE=0.05
