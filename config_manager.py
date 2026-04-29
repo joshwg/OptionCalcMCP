@@ -11,14 +11,23 @@ class ConfigManager:
     """Manages application configuration and window geometry"""
     
     CONFIG_FILE = "config.json"
+
+    DEFAULT_CONFIG = {
+        'risk_free_rate': 0.045,
+        'font_size': 14,
+        'mcp_server_mode': 'remote',
+        'mcp_server_url': 'https://optioncalcmcp-production.up.railway.app',
+        'mcp_server_auth_token': '',
+    }
     
     @staticmethod
     def load_config():
         """Load configuration from JSON file"""
         if os.path.exists(ConfigManager.CONFIG_FILE):
             with open(ConfigManager.CONFIG_FILE, 'r') as f:
-                return json.load(f)
-        return {'risk_free_rate': 0.045, 'font_size': 14}
+                loaded_config = json.load(f)
+            return {**ConfigManager.DEFAULT_CONFIG, **loaded_config}
+        return dict(ConfigManager.DEFAULT_CONFIG)
     
     @staticmethod
     def save_config(config):

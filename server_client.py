@@ -4,16 +4,49 @@ Provides the same API surface as yahoo_data.py and option_pricing.py so both
 UIs only need to change their import lines.
 """
 
+import json
 import os
 from datetime import datetime, timedelta
+from pathlib import Path
 
 import requests
 from dotenv import load_dotenv
 
 load_dotenv()
 
-_SERVER_URL = os.environ.get('MCP_SERVER_URL', 'http://localhost:8080').rstrip('/')
-_SERVER_AUTH_TOKEN = os.environ.get('MCP_SERVER_AUTH_TOKEN') or os.environ.get('OPTIONCALC_API_TOKEN')
+
+def _load_json_config():
+    config_candidates = [
+        Path.cwd() / 'config.json',
+        Path(__file__).resolve().parent / 'config.json',
+    ]
+
+    for config_path in config_candidates:
+        if not config_path.exists():
+            continue
+        try:
+            return json.loads(config_path.read_text())
+        except Exception:
+            continue
+    return {}
+
+
+_JSON_CONFIG = _load_json_config()
+
+
+def _config_value(*keys, default=None):
+    for key in keys:
+        value = os.environ.get(key)
+        if value:
+            return value
+        value = _JSON_CONFIG.get(key)
+        if value:
+            return value
+    return default
+
+
+_SERVER_URL = _config_value('MCP_SERVER_URL', 'mcp_server_url', default='http://localhost:8080').rstrip('/')
+_SERVER_AUTH_TOKEN = _config_value('MCP_SERVER_AUTH_TOKEN', 'OPTIONCALC_API_TOKEN', 'mcp_server_auth_token')
 
 
 def _headers():

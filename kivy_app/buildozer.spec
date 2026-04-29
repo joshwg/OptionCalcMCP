@@ -12,18 +12,21 @@ package.domain = org.optioncalc
 # (str) Source code where the main.py live
 source.dir = .
 
+# (str) Icon file used for the Android launcher icon
+icon.filename = assets/oprice.png
+
 # (list) Source files to include (let empty to include all the files)
-source.include_exts = py,png,jpg,kv,atlas,txt
+source.include_exts = py,png,jpg,kv,atlas,txt,json
 
 # (list) List of inclusions using pattern matching
-source.include_patterns = ../option_pricing.py,../yahoo_data.py,../config_manager.py,../utils/*.py
+source.include_patterns = ../server_client.py,../config_manager.py,../config.json
 
 # (str) Application versioning (method 1)
 version = 1.0
 
 # (list) Application requirements
 # comma separated e.g. requirements = sqlite3,kivy
-requirements = python3,kivy==2.3.0,numpy,scipy,pandas,requests,pytz,yfinance,certifi,charset-normalizer,idna,urllib3,python-dateutil,six,multitasking,lxml,beautifulsoup4,html5lib,webencode,appdirs,frozendict,peewee
+requirements = python3,kivy==2.3.0,requests,pytz,python-dotenv,certifi,charset-normalizer,idna,urllib3,python-dateutil,six
 
 # (str) Supported orientation (landscape, sensorLandscape, portrait or all)
 orientation = portrait
