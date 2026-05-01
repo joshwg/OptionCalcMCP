@@ -30,7 +30,7 @@ import uvicorn
 # ==================== HELPERS ====================
 
 POLYGON_API_KEY = os.environ.get('POLYGON_API_KEY', '')
-POLYGON_BASE = 'https://api.polygon.io'
+POLYGON_BASE = os.environ.get('POLYGON_BASE_URL', 'https://api.massive.com')
 
 
 class _TTLCache:
@@ -90,19 +90,14 @@ def get_stock_info(ticker):
     if cached:
         return cached
     try:
-        snap = _polygon_get(f'/v2/snapshot/locale/us/markets/stocks/tickers/{ticker}')
-        t = snap.get('ticker', {})
-
-        current_price = (
-            (t.get('lastTrade') or {}).get('p')
-            or (t.get('day') or {}).get('c')
-            or (t.get('prevDay') or {}).get('c')
-        )
-        if not current_price:
+        # /v2/aggs/ticker/{ticker}/prev is available on the free tier
+        prev = _polygon_get(f'/v2/aggs/ticker/{ticker}/prev', {'adjusted': 'true'})
+        results = prev.get('results', [])
+        if not results:
             return {'success': False, 'error': f'Could not fetch data for ticker: {ticker}'}
-
-        prev_close = (t.get('prevDay') or {}).get('c')
-        volume = (t.get('day') or {}).get('v')
+        day = results[0]
+        current_price = day.get('c')
+        volume = day.get('v')
 
         ref = _polygon_get(f'/v3/reference/tickers/{ticker}')
         company_name = (ref.get('results') or {}).get('name') or ticker
@@ -124,7 +119,7 @@ def get_stock_info(ticker):
             'ticker': ticker,
             'company_name': company_name,
             'current_price': float(current_price),
-            'previous_close': float(prev_close) if prev_close else None,
+            'previous_close': float(day.get('o')),  # prev day open as reference
             'volume': int(volume) if volume else None,
             'dividend_yield': float(div_yield),
             'earnings_date': 'unavailable',
@@ -194,34 +189,33 @@ def get_option_chain(ticker, expiration_date=None):
             expiration_date = dates[0]
 
         calls_data, puts_data = [], []
-        data = _polygon_get(f'/v3/snapshot/options/{ticker}', {'expiration_date': expiration_date, 'limit': 250})
+        data = _polygon_get('/v3/reference/options/contracts', {
+            'underlying_ticker': ticker,
+            'expiration_date': expiration_date,
+            'order': 'asc',
+            'sort': 'strike_price',
+            'limit': 250,
+        })
         while True:
-            for opt in data.get('results', []):
-                details = opt.get('details', {})
-                contract_type = details.get('contract_type', '').lower()
-                last_quote = opt.get('last_quote', {})
-                day = opt.get('day', {})
-                iv = opt.get('implied_volatility') or 0
+            for c in data.get('results', []):
                 row = {
-                    'strike': float(details.get('strike_price', 0)),
-                    'lastPrice': day.get('close'),
-                    'bid': last_quote.get('bid'),
-                    'ask': last_quote.get('ask'),
-                    'volume': int(day.get('volume') or 0),
-                    'openInterest': int(opt.get('open_interest') or 0),
-                    'impliedVolatility': normalize_implied_volatility(iv),
+                    'strike': float(c.get('strike_price', 0)),
+                    'lastPrice': None,
+                    'bid': None,
+                    'ask': None,
+                    'volume': 0,
+                    'openInterest': 0,
+                    'impliedVolatility': 0,
                 }
-                if contract_type == 'call':
+                if c.get('contract_type') == 'call':
                     calls_data.append(row)
-                elif contract_type == 'put':
+                elif c.get('contract_type') == 'put':
                     puts_data.append(row)
             next_url = data.get('next_url')
             if not next_url:
                 break
             data = _polygon_next(next_url)
 
-        calls_data.sort(key=lambda x: x['strike'])
-        puts_data.sort(key=lambda x: x['strike'])
         return {
             'success': True,
             'expiration_date': expiration_date,
