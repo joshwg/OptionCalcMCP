@@ -13,7 +13,6 @@ import math
 
 import numpy as np
 from scipy.stats import norm
-import yfinance as yf
 import pytz
 import requests
 
@@ -29,6 +28,10 @@ import uvicorn
 
 
 # ==================== HELPERS ====================
+
+POLYGON_API_KEY = os.environ.get('POLYGON_API_KEY', '')
+POLYGON_BASE = 'https://api.polygon.io'
+
 
 class _TTLCache:
     def __init__(self):
@@ -48,16 +51,18 @@ class _TTLCache:
 _cache = _TTLCache()
 
 
-def _retry_yf(fn, retries=3, base_delay=2):
-    for attempt in range(retries):
-        try:
-            return fn()
-        except Exception as e:
-            msg = str(e).lower()
-            if ('too many requests' in msg or 'rate limit' in msg or '429' in msg) and attempt < retries - 1:
-                time.sleep(base_delay * (2 ** attempt))
-                continue
-            raise
+def _polygon_get(path, params=None):
+    p = {**(params or {}), 'apiKey': POLYGON_API_KEY}
+    resp = requests.get(f'{POLYGON_BASE}{path}', params=p, timeout=10)
+    resp.raise_for_status()
+    return resp.json()
+
+
+def _polygon_next(next_url):
+    sep = '&' if '?' in next_url else '?'
+    resp = requests.get(f'{next_url}{sep}apiKey={POLYGON_API_KEY}', timeout=10)
+    resp.raise_for_status()
+    return resp.json()
 
 
 # ==================== STOCK DATA FUNCTIONS ====================
@@ -81,206 +86,150 @@ def normalize_dividend_yield(div_value):
 
 
 def get_stock_info(ticker):
-    """Get comprehensive stock information from Yahoo Finance"""
     cached = _cache.get(f'stock_info:{ticker}')
     if cached:
         return cached
     try:
-        stock = yf.Ticker(ticker)
-        info = _retry_yf(lambda: stock.info)
+        snap = _polygon_get(f'/v2/snapshot/locale/us/markets/stocks/tickers/{ticker}')
+        t = snap.get('ticker', {})
 
-        current_price = info.get('currentPrice') or info.get('regularMarketPrice')
+        current_price = (
+            (t.get('lastTrade') or {}).get('p')
+            or (t.get('day') or {}).get('c')
+            or (t.get('prevDay') or {}).get('c')
+        )
         if not current_price:
-            hist = _retry_yf(lambda: stock.history(period='5d'))
-            if not hist.empty:
-                current_price = hist['Close'].iloc[-1]
-        
-        if not current_price:
-            return {
-                'success': False,
-                'error': f'Could not fetch data for ticker: {ticker}'
-            }
-        
-        company_name = info.get('longName') or info.get('shortName') or ticker
-        previous_close = info.get('previousClose') or info.get('regularMarketPreviousClose')
-        volume = info.get('volume') or info.get('regularMarketVolume')
-        
-        dividend_yield = info.get('dividendYield', 0) or 0
-        dividend_yield = normalize_dividend_yield(dividend_yield)
-        
-        earnings_date = "unavailable"
-        if 'earningsDate' in info and info['earningsDate']:
-            try:
-                if isinstance(info['earningsDate'], list) and len(info['earningsDate']) > 0:
-                    earnings_timestamp = info['earningsDate'][0]
-                else:
-                    earnings_timestamp = info['earningsDate']
-                
-                if hasattr(earnings_timestamp, 'strftime'):
-                    earnings_date = earnings_timestamp.strftime('%Y-%m-%d')
-                else:
-                    earnings_datetime = datetime.fromtimestamp(earnings_timestamp)
-                    earnings_date = earnings_datetime.strftime('%Y-%m-%d')
-            except:
-                pass
-        
+            return {'success': False, 'error': f'Could not fetch data for ticker: {ticker}'}
+
+        prev_close = (t.get('prevDay') or {}).get('c')
+        volume = (t.get('day') or {}).get('v')
+
+        ref = _polygon_get(f'/v3/reference/tickers/{ticker}')
+        company_name = (ref.get('results') or {}).get('name') or ticker
+
+        div_yield = 0.0
+        try:
+            divs = _polygon_get('/v3/reference/dividends', {
+                'ticker': ticker, 'limit': 8, 'order': 'desc', 'sort': 'pay_date'
+            })
+            div_results = divs.get('results', [])
+            if div_results and current_price:
+                annual_div = sum(d.get('cash_amount', 0) for d in div_results[:4])
+                div_yield = normalize_dividend_yield(annual_div / current_price)
+        except Exception:
+            pass
+
         result = {
             'success': True,
             'ticker': ticker,
             'company_name': company_name,
             'current_price': float(current_price),
-            'previous_close': float(previous_close) if previous_close else None,
+            'previous_close': float(prev_close) if prev_close else None,
             'volume': int(volume) if volume else None,
-            'dividend_yield': float(dividend_yield),
-            'earnings_date': earnings_date
+            'dividend_yield': float(div_yield),
+            'earnings_date': 'unavailable',
         }
         _cache.set(f'stock_info:{ticker}', result, ttl=300)
         return result
 
     except Exception as e:
-        return {
-            'success': False,
-            'error': str(e)
-        }
+        return {'success': False, 'error': str(e)}
 
 
 def get_historical_volatility(ticker, days=30):
-    """Calculate historical volatility from past stock prices"""
     cached = _cache.get(f'hist_vol:{ticker}:{days}')
     if cached is not None:
         return cached
     try:
-        stock = yf.Ticker(ticker)
-        end_date = datetime.now()
-        start_date = end_date - timedelta(days=days + 10)
-
-        hist = _retry_yf(lambda: stock.history(start=start_date, end=end_date))
-
-        if hist.empty or len(hist) < 2:
+        end = datetime.now()
+        start = end - timedelta(days=days + 10)
+        data = _polygon_get(
+            f'/v2/aggs/ticker/{ticker}/range/1/day'
+            f'/{start.strftime("%Y-%m-%d")}/{end.strftime("%Y-%m-%d")}',
+            {'adjusted': 'true', 'sort': 'asc', 'limit': 300}
+        )
+        results = data.get('results', [])
+        if len(results) < 2:
             return None
-
-        returns = np.log(hist['Close'] / hist['Close'].shift(1))
-        returns = returns.dropna()
-
-        if len(returns) < 2:
-            return None
-
+        closes = np.array([r['c'] for r in results])
+        returns = np.log(closes[1:] / closes[:-1])
         volatility = float(returns.std() * np.sqrt(252))
         _cache.set(f'hist_vol:{ticker}:{days}', volatility, ttl=1800)
         return volatility
-
-    except Exception as e:
+    except Exception:
         return None
 
 
 def search_tickers(query, max_results=10):
-    """Search for stock tickers matching the query"""
-    if not query or len(query) < 1:
+    if not query:
         return []
-    
     try:
-        url = f"https://query2.finance.yahoo.com/v1/finance/search"
-        params = {
-            'q': query,
-            'quotesCount': max_results,
-            'newsCount': 0,
-            'enableFuzzyQuery': False,
-            'quotesQueryId': 'tss_match_phrase_query'
-        }
-        headers = {'User-Agent': 'Mozilla/5.0'}
-        
-        response = requests.get(url, params=params, headers=headers, timeout=5)
-        
-        if response.status_code == 200:
-            data = response.json()
-            quotes = data.get('quotes', [])
-            
-            results = []
-            for quote in quotes[:max_results]:
-                if quote.get('quoteType') in ['EQUITY', 'ETF']:
-                    symbol = quote.get('symbol', '')
-                    name = quote.get('longname') or quote.get('shortname', '')
-                    exchange = quote.get('exchange', '')
-                    results.append({
-                        'symbol': symbol,
-                        'name': name,
-                        'exchange': exchange
-                    })
-            
-            return results
-        
-        return []
-    
-    except Exception as e:
+        data = _polygon_get('/v3/reference/tickers', {
+            'search': query,
+            'active': 'true',
+            'market': 'stocks',
+            'limit': max_results,
+        })
+        return [
+            {
+                'symbol': t.get('ticker', ''),
+                'name': t.get('name', ''),
+                'exchange': t.get('primary_exchange', ''),
+            }
+            for t in data.get('results', [])
+        ]
+    except Exception:
         return []
 
 
 def get_option_chain(ticker, expiration_date=None):
-    """Get option chain data for a specific ticker and expiration"""
     try:
-        stock = yf.Ticker(ticker)
-
         if expiration_date is None:
-            dates = _retry_yf(lambda: stock.options)
+            exp_result = get_option_expirations(ticker)
+            if not exp_result.get('success'):
+                return exp_result
+            dates = exp_result.get('expirations', [])
             if not dates:
                 return {'success': False, 'error': 'No options available'}
             expiration_date = dates[0]
 
-        opt_chain = _retry_yf(lambda: stock.option_chain(expiration_date))
+        calls_data, puts_data = [], []
+        data = _polygon_get(f'/v3/snapshot/options/{ticker}', {'expiration_date': expiration_date, 'limit': 250})
+        while True:
+            for opt in data.get('results', []):
+                details = opt.get('details', {})
+                contract_type = details.get('contract_type', '').lower()
+                last_quote = opt.get('last_quote', {})
+                day = opt.get('day', {})
+                iv = opt.get('implied_volatility') or 0
+                row = {
+                    'strike': float(details.get('strike_price', 0)),
+                    'lastPrice': day.get('close'),
+                    'bid': last_quote.get('bid'),
+                    'ask': last_quote.get('ask'),
+                    'volume': int(day.get('volume') or 0),
+                    'openInterest': int(opt.get('open_interest') or 0),
+                    'impliedVolatility': normalize_implied_volatility(iv),
+                }
+                if contract_type == 'call':
+                    calls_data.append(row)
+                elif contract_type == 'put':
+                    puts_data.append(row)
+            next_url = data.get('next_url')
+            if not next_url:
+                break
+            data = _polygon_next(next_url)
 
-        def safe_float(value):
-            if value is None:
-                return None
-            try:
-                value = float(value)
-            except (TypeError, ValueError):
-                return None
-            if math.isnan(value):
-                return None
-            return value
-
-        def safe_int(value):
-            numeric_value = safe_float(value)
-            if numeric_value is None:
-                return 0
-            return int(numeric_value)
-        
-        calls_data = []
-        for _, row in opt_chain.calls.iterrows():
-            calls_data.append({
-                'strike': float(row['strike']),
-                'lastPrice': safe_float(row['lastPrice']) if 'lastPrice' in row else None,
-                'bid': safe_float(row['bid']) if 'bid' in row else None,
-                'ask': safe_float(row['ask']) if 'ask' in row else None,
-                'volume': safe_int(row['volume']) if 'volume' in row else 0,
-                'openInterest': safe_int(row['openInterest']) if 'openInterest' in row else 0,
-                'impliedVolatility': normalize_implied_volatility(row.get('impliedVolatility', 0))
-            })
-        
-        puts_data = []
-        for _, row in opt_chain.puts.iterrows():
-            puts_data.append({
-                'strike': float(row['strike']),
-                'lastPrice': safe_float(row['lastPrice']) if 'lastPrice' in row else None,
-                'bid': safe_float(row['bid']) if 'bid' in row else None,
-                'ask': safe_float(row['ask']) if 'ask' in row else None,
-                'volume': safe_int(row['volume']) if 'volume' in row else 0,
-                'openInterest': safe_int(row['openInterest']) if 'openInterest' in row else 0,
-                'impliedVolatility': normalize_implied_volatility(row.get('impliedVolatility', 0))
-            })
-        
+        calls_data.sort(key=lambda x: x['strike'])
+        puts_data.sort(key=lambda x: x['strike'])
         return {
             'success': True,
             'expiration_date': expiration_date,
             'calls': calls_data,
-            'puts': puts_data
+            'puts': puts_data,
         }
-    
     except Exception as e:
-        return {
-            'success': False,
-            'error': str(e)
-        }
+        return {'success': False, 'error': str(e)}
 
 
 # ==================== OPTION PRICING FUNCTIONS ====================
@@ -402,13 +351,27 @@ def binomial_tree_american(S, K, T, r, sigma, option_type='call', steps=100, q=0
 
 
 def get_option_expirations(ticker, months=None):
-    """Get list of available option expiration dates, optionally filtered to next N months"""
     cache_key = f'opt_exp:{ticker}'
     dates = _cache.get(cache_key)
     if dates is None:
         try:
-            stock = yf.Ticker(ticker)
-            dates = list(_retry_yf(lambda: stock.options) or [])
+            today_str = datetime.now().strftime('%Y-%m-%d')
+            all_dates = set()
+            data = _polygon_get('/v3/reference/options/contracts', {
+                'underlying_ticker': ticker,
+                'expiration_date.gte': today_str,
+                'order': 'asc',
+                'sort': 'expiration_date',
+                'limit': 250,
+            })
+            while True:
+                for c in data.get('results', []):
+                    all_dates.add(c['expiration_date'])
+                next_url = data.get('next_url')
+                if not next_url:
+                    break
+                data = _polygon_next(next_url)
+            dates = sorted(all_dates)
             if not dates:
                 return {'success': False, 'error': 'No options available'}
             _cache.set(cache_key, dates, ttl=3600)
@@ -419,13 +382,11 @@ def get_option_expirations(ticker, months=None):
         now_et = datetime.now(eastern)
         today = datetime.now()
         cutoff = today + timedelta(days=int(months) * 30)
-        filtered = []
-        for d in dates:
-            exp = datetime.strptime(d, '%Y-%m-%d')
-            if exp.date() == today.date() and now_et.hour >= 16:
-                continue
-            if today.date() <= exp.date() <= cutoff.date():
-                filtered.append(d)
+        filtered = [
+            d for d in dates
+            if today.date() <= datetime.strptime(d, '%Y-%m-%d').date() <= cutoff.date()
+            and not (datetime.strptime(d, '%Y-%m-%d').date() == today.date() and now_et.hour >= 16)
+        ]
         return {'success': True, 'expirations': filtered, 'all_expirations': dates}
     return {'success': True, 'expirations': dates}
 
