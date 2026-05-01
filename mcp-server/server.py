@@ -5,6 +5,7 @@ Provides option pricing, Greeks calculation, and stock data tools via MCP
 
 import json
 import os
+import time
 from datetime import datetime, timedelta
 from typing import Any
 
@@ -25,6 +26,38 @@ from starlette.routing import Route, Mount
 from starlette.requests import Request
 from starlette.responses import JSONResponse, PlainTextResponse
 import uvicorn
+
+
+# ==================== HELPERS ====================
+
+class _TTLCache:
+    def __init__(self):
+        self._store = {}
+
+    def get(self, key):
+        entry = self._store.get(key)
+        if entry and time.time() < entry[1]:
+            return entry[0]
+        self._store.pop(key, None)
+        return None
+
+    def set(self, key, value, ttl):
+        self._store[key] = (value, time.time() + ttl)
+
+
+_cache = _TTLCache()
+
+
+def _retry_yf(fn, retries=3, base_delay=2):
+    for attempt in range(retries):
+        try:
+            return fn()
+        except Exception as e:
+            msg = str(e).lower()
+            if ('too many requests' in msg or 'rate limit' in msg or '429' in msg) and attempt < retries - 1:
+                time.sleep(base_delay * (2 ** attempt))
+                continue
+            raise
 
 
 # ==================== STOCK DATA FUNCTIONS ====================
@@ -49,13 +82,16 @@ def normalize_dividend_yield(div_value):
 
 def get_stock_info(ticker):
     """Get comprehensive stock information from Yahoo Finance"""
+    cached = _cache.get(f'stock_info:{ticker}')
+    if cached:
+        return cached
     try:
         stock = yf.Ticker(ticker)
-        info = stock.info
-        
+        info = _retry_yf(lambda: stock.info)
+
         current_price = info.get('currentPrice') or info.get('regularMarketPrice')
         if not current_price:
-            hist = stock.history(period='5d')
+            hist = _retry_yf(lambda: stock.history(period='5d'))
             if not hist.empty:
                 current_price = hist['Close'].iloc[-1]
         
@@ -88,7 +124,7 @@ def get_stock_info(ticker):
             except:
                 pass
         
-        return {
+        result = {
             'success': True,
             'ticker': ticker,
             'company_name': company_name,
@@ -98,7 +134,9 @@ def get_stock_info(ticker):
             'dividend_yield': float(dividend_yield),
             'earnings_date': earnings_date
         }
-    
+        _cache.set(f'stock_info:{ticker}', result, ttl=300)
+        return result
+
     except Exception as e:
         return {
             'success': False,
@@ -108,25 +146,29 @@ def get_stock_info(ticker):
 
 def get_historical_volatility(ticker, days=30):
     """Calculate historical volatility from past stock prices"""
+    cached = _cache.get(f'hist_vol:{ticker}:{days}')
+    if cached is not None:
+        return cached
     try:
         stock = yf.Ticker(ticker)
         end_date = datetime.now()
         start_date = end_date - timedelta(days=days + 10)
-        
-        hist = stock.history(start=start_date, end=end_date)
-        
+
+        hist = _retry_yf(lambda: stock.history(start=start_date, end=end_date))
+
         if hist.empty or len(hist) < 2:
             return None
-        
+
         returns = np.log(hist['Close'] / hist['Close'].shift(1))
         returns = returns.dropna()
-        
+
         if len(returns) < 2:
             return None
-        
-        volatility = returns.std() * np.sqrt(252)
-        return float(volatility)
-    
+
+        volatility = float(returns.std() * np.sqrt(252))
+        _cache.set(f'hist_vol:{ticker}:{days}', volatility, ttl=1800)
+        return volatility
+
     except Exception as e:
         return None
 
@@ -177,14 +219,14 @@ def get_option_chain(ticker, expiration_date=None):
     """Get option chain data for a specific ticker and expiration"""
     try:
         stock = yf.Ticker(ticker)
-        
+
         if expiration_date is None:
-            dates = stock.options
+            dates = _retry_yf(lambda: stock.options)
             if not dates:
                 return {'success': False, 'error': 'No options available'}
             expiration_date = dates[0]
-        
-        opt_chain = stock.option_chain(expiration_date)
+
+        opt_chain = _retry_yf(lambda: stock.option_chain(expiration_date))
 
         def safe_float(value):
             if value is None:
@@ -361,27 +403,31 @@ def binomial_tree_american(S, K, T, r, sigma, option_type='call', steps=100, q=0
 
 def get_option_expirations(ticker, months=None):
     """Get list of available option expiration dates, optionally filtered to next N months"""
-    try:
-        stock = yf.Ticker(ticker)
-        dates = list(stock.options or [])
-        if not dates:
-            return {'success': False, 'error': 'No options available'}
-        if months is not None:
-            eastern = pytz.timezone('US/Eastern')
-            now_et = datetime.now(eastern)
-            today = datetime.now()
-            cutoff = today + timedelta(days=int(months) * 30)
-            filtered = []
-            for d in dates:
-                exp = datetime.strptime(d, '%Y-%m-%d')
-                if exp.date() == today.date() and now_et.hour >= 16:
-                    continue
-                if today.date() <= exp.date() <= cutoff.date():
-                    filtered.append(d)
-            return {'success': True, 'expirations': filtered, 'all_expirations': dates}
-        return {'success': True, 'expirations': dates}
-    except Exception as e:
-        return {'success': False, 'error': str(e)}
+    cache_key = f'opt_exp:{ticker}'
+    dates = _cache.get(cache_key)
+    if dates is None:
+        try:
+            stock = yf.Ticker(ticker)
+            dates = list(_retry_yf(lambda: stock.options) or [])
+            if not dates:
+                return {'success': False, 'error': 'No options available'}
+            _cache.set(cache_key, dates, ttl=3600)
+        except Exception as e:
+            return {'success': False, 'error': str(e)}
+    if months is not None:
+        eastern = pytz.timezone('US/Eastern')
+        now_et = datetime.now(eastern)
+        today = datetime.now()
+        cutoff = today + timedelta(days=int(months) * 30)
+        filtered = []
+        for d in dates:
+            exp = datetime.strptime(d, '%Y-%m-%d')
+            if exp.date() == today.date() and now_et.hour >= 16:
+                continue
+            if today.date() <= exp.date() <= cutoff.date():
+                filtered.append(d)
+        return {'success': True, 'expirations': filtered, 'all_expirations': dates}
+    return {'success': True, 'expirations': dates}
 
 
 def get_atm_implied_volatility(ticker, expiration_date, current_price, option_type='call'):
